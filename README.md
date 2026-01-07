@@ -188,6 +188,26 @@ sudo chattr +i /opt/server-monitor/etc/config.env
 sudo systemctl restart server-ssh-monitor server-process-monitor
 ```
 
+### Add/Update Single Config Value
+```bash
+# Remove protection
+sudo chattr -i /opt/server-monitor/etc/config.env
+
+# Add timezone
+echo 'TIMEZONE="Asia/Kathmandu"' | sudo tee -a /opt/server-monitor/etc/config.env
+
+# Or change rate limit
+sudo sed -i 's/RATE_LIMIT_SECONDS=300/RATE_LIMIT_SECONDS=600/' /opt/server-monitor/etc/config.env
+
+# Restore protection
+sudo chattr +i /opt/server-monitor/etc/config.env
+```
+
+### View Current Config
+```bash
+sudo cat /opt/server-monitor/etc/config.env
+```
+
 ---
 
 ## 🗑️ How to Uninstall
