@@ -1,0 +1,34 @@
+[Unit]
+Description=Server Monitor Watchdog
+Documentation=https://github.com/your-repo/server-monitor
+After=network.target
+# Start after all other monitors
+After=server-process-monitor.service server-network-monitor.service server-ssh-monitor.service
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'while true; do /opt/server-monitor/bin/watchdog.sh; sleep 120; done'
+Restart=always
+RestartSec=5
+
+# Watchdog has higher restart priority
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+# Security hardening
+NoNewPrivileges=false
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/server-monitor/var /opt/server-monitor/logs
+PrivateTmp=true
+
+# Resource limits
+MemoryMax=32M
+CPUQuota=5%
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=server-watchdog
+
+[Install]
+WantedBy=multi-user.target

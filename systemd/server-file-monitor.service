@@ -1,0 +1,19 @@
+[Unit]
+Description=File Integrity Monitor
+Documentation=https://github.com/your-repo/server-monitor
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/server-monitor/bin/file-monitor.sh
+
+# Security hardening
+NoNewPrivileges=false
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/server-monitor/var /opt/server-monitor/logs /var/lib/aide
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=server-file-monitor

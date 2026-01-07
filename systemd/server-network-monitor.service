@@ -1,0 +1,29 @@
+[Unit]
+Description=Network Connection Monitor
+Documentation=https://github.com/your-repo/server-monitor
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'while true; do /opt/server-monitor/bin/network-monitor.sh; sleep 60; done'
+Restart=always
+RestartSec=10
+WatchdogSec=180
+
+# Security hardening
+NoNewPrivileges=false
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/server-monitor/var /opt/server-monitor/logs
+PrivateTmp=true
+
+# Resource limits
+MemoryMax=64M
+CPUQuota=5%
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=server-network-monitor
+
+[Install]
+WantedBy=multi-user.target

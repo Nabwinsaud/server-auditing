@@ -1,0 +1,29 @@
+[Unit]
+Description=SSH Activity Monitor
+Documentation=https://github.com/your-repo/server-monitor
+After=network.target sshd.service
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'while true; do /opt/server-monitor/bin/ssh-monitor.sh; sleep 30; done'
+Restart=always
+RestartSec=10
+WatchdogSec=120
+
+# Security hardening
+NoNewPrivileges=false
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/server-monitor/var /opt/server-monitor/logs
+PrivateTmp=true
+
+# Resource limits
+MemoryMax=64M
+CPUQuota=5%
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=server-ssh-monitor
+
+[Install]
+WantedBy=multi-user.target

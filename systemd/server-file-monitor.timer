@@ -1,0 +1,16 @@
+[Unit]
+Description=File Integrity Monitor Timer
+Documentation=https://github.com/your-repo/server-monitor
+
+[Timer]
+# Run 5 minutes after boot
+OnBootSec=5min
+# Then every 15 minutes
+OnUnitActiveSec=15min
+# Persist timer across reboots
+Persistent=true
+# Randomize to avoid thundering herd
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target
