@@ -19,6 +19,10 @@ HOSTNAME="${HOSTNAME:-$(hostname)}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/server-monitor}"
 RATE_LIMIT_SECONDS="${RATE_LIMIT_SECONDS:-300}"  # 5 minutes default to prevent spam
 LOG_FILE="${LOG_FILE:-/opt/server-monitor/logs/monitor.log}"
+TIMEZONE="${TIMEZONE:-UTC}"  # Set your timezone e.g., Asia/Kathmandu
+
+# Set timezone for date commands
+export TZ="$TIMEZONE"
 
 CACHE_DIR="${INSTALL_DIR}/var/cache"
 DEDUP_DIR="${INSTALL_DIR}/var/dedup"

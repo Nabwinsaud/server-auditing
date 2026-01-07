@@ -49,11 +49,31 @@ echo "$NEW_ENTRIES" | grep "Accepted" | while read -r line; do
     USER=$(echo "$line" | grep -oP 'for \K\w+' || echo "unknown")
     IP=$(echo "$line" | grep -oP 'from \K[0-9.]+' || echo "unknown")
     METHOD=$(echo "$line" | grep -oP 'Accepted \K\w+' || echo "unknown")
+    PORT=$(echo "$line" | grep -oP 'port \K[0-9]+' || echo "unknown")
     
-    # User-friendly message with proper newlines
+    # Try to get hostname/device name from IP (reverse DNS)
+    DEVICE_NAME=$(host "$IP" 2>/dev/null | grep -oP 'pointer \K[^.]+' || echo "")
+    
+    # Check if local/internal IP
+    if [[ "$IP" =~ ^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.) ]]; then
+        IP_TYPE="🏠 Local Network"
+    else
+        IP_TYPE="🌍 External"
+    fi
+    
+    # Build message with all available info
     MSG="👤 **User:** \`${USER}\`
-🌍 **IP Address:** \`${IP}\`
-🔑 **Auth Method:** ${METHOD}"
+📍 **IP Address:** \`${IP}\` (${IP_TYPE})"
+    
+    # Add device name if found
+    if [[ -n "$DEVICE_NAME" ]]; then
+        MSG+="
+💻 **Device:** \`${DEVICE_NAME}\`"
+    fi
+    
+    MSG+="
+🔑 **Auth Method:** ${METHOD}
+🚪 **Port:** ${PORT}"
     
     # Root login is higher severity
     if [[ "$USER" == "root" ]]; then
@@ -89,20 +109,29 @@ _Consider blocking these IPs if attacks continue_"
 fi
 
 #-------------------------------------------------------------------------------
-# Check for invalid users (only alert if significant number)
+# Check for invalid users - Show REAL attacker IPs
 #-------------------------------------------------------------------------------
 INVALID_COUNT=$(echo "$NEW_ENTRIES" | grep -c "Invalid user" || echo "0")
 
 if [[ $INVALID_COUNT -gt 3 ]]; then
-    # Get sample of invalid usernames being tried
+    # Get usernames AND IPs of attackers
     INVALID_NAMES=$(echo "$NEW_ENTRIES" | grep "Invalid user" | \
         grep -oP 'Invalid user \K\w+' | sort | uniq | head -5 | \
         tr '\n' ', ' | sed 's/,$//')
     
-    MSG="🔍 **Attempts:** ${INVALID_COUNT}
-👤 **Usernames tried:** \`${INVALID_NAMES}\`
+    # Get attacker IPs with counts
+    ATTACKER_IPS=$(echo "$NEW_ENTRIES" | grep "Invalid user" | \
+        grep -oP 'from \K[0-9.]+' | sort | uniq -c | sort -rn | head -5 | \
+        awk '{print "• **" $2 "** (" $1 " attempts)"}')
+    
+    MSG="🔍 **Total Attempts:** ${INVALID_COUNT}
 
-_Attackers scanning for common usernames_"
+**Attacker IPs:**
+${ATTACKER_IPS}
+
+**Usernames tried:** \`${INVALID_NAMES}\`
+
+_These are real attackers scanning your server_"
     
     "$ALERT_SCRIPT" "ssh" "Invalid Username Attempts" "$MSG" "medium"
 fi

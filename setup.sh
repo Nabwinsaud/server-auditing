@@ -127,12 +127,17 @@ chmod 700 "${INSTALL_DIR}/bin"/*.sh
 # Create configuration
 #-------------------------------------------------------------------------------
 log "Creating configuration..."
+
+# Get timezone from environment or use UTC
+TIMEZONE="${TIMEZONE:-UTC}"
+
 cat > "${INSTALL_DIR}/etc/config.env" << EOF
 # Server Monitor Configuration
 # SECURITY: Keep this file protected (chmod 600)
 DISCORD_WEBHOOK="${DISCORD_WEBHOOK}"
 HOSTNAME="${HOSTNAME}"
 INSTALL_DIR="${INSTALL_DIR}"
+TIMEZONE="${TIMEZONE}"
 RATE_LIMIT_SECONDS=300
 LOG_FILE="${INSTALL_DIR}/logs/monitor.log"
 EOF

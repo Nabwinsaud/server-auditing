@@ -1,7 +1,7 @@
 #!/bin/bash
 #===============================================================================
-# WATCHDOG - MONITORS THE MONITORING SYSTEM
-# Ensures all monitoring services are running and restarts if needed
+# WATCHDOG - INTELLIGENT SERVICE MONITOR
+# Automatically detects and monitors important services on your server
 #===============================================================================
 
 set -euo pipefail
@@ -11,9 +11,13 @@ CONFIG_FILE="${CONFIG_FILE:-/opt/server-monitor/etc/config.env}"
 
 INSTALL_DIR="${INSTALL_DIR:-/opt/server-monitor}"
 ALERT_SCRIPT="${INSTALL_DIR}/bin/alert.sh"
+STATE_DIR="${INSTALL_DIR}/var/state"
+SERVICES_STATE="${STATE_DIR}/watched_services"
+
+mkdir -p "$STATE_DIR"
 
 #-------------------------------------------------------------------------------
-# Services to monitor
+# Internal monitoring services (always monitor these)
 #-------------------------------------------------------------------------------
 MONITOR_SERVICES=(
     "server-process-monitor"
@@ -21,43 +25,152 @@ MONITOR_SERVICES=(
     "server-ssh-monitor"
 )
 
-CRITICAL_SERVICES=(
-    "auditd"
-    "fail2ban"
-)
+#-------------------------------------------------------------------------------
+# Auto-detect important services running on this server
+#-------------------------------------------------------------------------------
+detect_important_services() {
+    local services=()
+    
+    # Web servers
+    systemctl is-enabled nginx 2>/dev/null && services+=("nginx")
+    systemctl is-enabled apache2 2>/dev/null && services+=("apache2")
+    systemctl is-enabled httpd 2>/dev/null && services+=("httpd")
+    systemctl is-enabled caddy 2>/dev/null && services+=("caddy")
+    
+    # Databases
+    systemctl is-enabled mysql 2>/dev/null && services+=("mysql")
+    systemctl is-enabled mariadb 2>/dev/null && services+=("mariadb")
+    systemctl is-enabled postgresql 2>/dev/null && services+=("postgresql")
+    systemctl is-enabled mongod 2>/dev/null && services+=("mongod")
+    systemctl is-enabled redis 2>/dev/null && services+=("redis")
+    systemctl is-enabled redis-server 2>/dev/null && services+=("redis-server")
+    
+    # Application servers
+    systemctl is-enabled docker 2>/dev/null && services+=("docker")
+    systemctl is-enabled containerd 2>/dev/null && services+=("containerd")
+    systemctl is-enabled pm2-* 2>/dev/null && services+=("pm2")
+    
+    # Security services
+    systemctl is-enabled auditd 2>/dev/null && services+=("auditd")
+    systemctl is-enabled fail2ban 2>/dev/null && services+=("fail2ban")
+    systemctl is-enabled ufw 2>/dev/null && services+=("ufw")
+    systemctl is-enabled firewalld 2>/dev/null && services+=("firewalld")
+    
+    # Other common services
+    systemctl is-enabled cron 2>/dev/null && services+=("cron")
+    systemctl is-enabled sshd 2>/dev/null && services+=("sshd")
+    systemctl is-enabled ssh 2>/dev/null && services+=("ssh")
+    
+    echo "${services[@]}"
+}
 
 #-------------------------------------------------------------------------------
-# Check monitoring services
+# Get friendly service description
+#-------------------------------------------------------------------------------
+get_service_description() {
+    local svc="$1"
+    case "$svc" in
+        nginx|apache2|httpd|caddy) echo "🌐 Web Server" ;;
+        mysql|mariadb|postgresql|mongod) echo "🗄️ Database" ;;
+        redis|redis-server) echo "⚡ Cache/Queue" ;;
+        docker|containerd) echo "🐳 Container Runtime" ;;
+        auditd|fail2ban|ufw|firewalld) echo "🔒 Security Service" ;;
+        sshd|ssh) echo "🔑 SSH Server" ;;
+        cron) echo "⏰ Scheduler" ;;
+        *) echo "⚙️ Service" ;;
+    esac
+}
+
+#-------------------------------------------------------------------------------
+# Get severity based on service type
+#-------------------------------------------------------------------------------
+get_service_severity() {
+    local svc="$1"
+    case "$svc" in
+        nginx|apache2|httpd|caddy) echo "critical" ;;  # Web down = site down
+        mysql|mariadb|postgresql|mongod) echo "critical" ;;  # DB down = app down
+        docker) echo "critical" ;;  # Containers may die
+        sshd|ssh) echo "critical" ;;  # Can't access server!
+        auditd|fail2ban) echo "high" ;;  # Security degraded
+        redis|redis-server) echo "high" ;;  # Performance impact
+        *) echo "medium" ;;
+    esac
+}
+
+#-------------------------------------------------------------------------------
+# Check internal monitoring services
 #-------------------------------------------------------------------------------
 for svc in "${MONITOR_SERVICES[@]}"; do
     if ! systemctl is-active --quiet "$svc" 2>/dev/null; then
-        MSG="Monitoring service down:\n"
-        MSG+="• **Service:** ${svc}\n"
-        MSG+="• **Status:** $(systemctl is-active "$svc" 2>/dev/null || echo "unknown")\n"
-        MSG+="• **Action:** Attempting automatic restart"
+        MSG="🐕 Monitoring service stopped!
+
+**Service:** \`${svc}\`
+**Status:** $(systemctl is-active "$svc" 2>/dev/null || echo "stopped")
+**Action:** Attempting automatic restart..."
         
-        "$ALERT_SCRIPT" "watchdog" "Monitor Service Down" "$MSG" "critical"
+        "$ALERT_SCRIPT" "watchdog" "Monitor Down" "$MSG" "critical"
         
         # Attempt restart
         systemctl restart "$svc" 2>/dev/null || true
         sleep 2
         
-        # Verify restart
         if systemctl is-active --quiet "$svc" 2>/dev/null; then
-            "$ALERT_SCRIPT" "watchdog" "Service Recovered" "Service ${svc} restarted successfully" "low"
-        else
-            "$ALERT_SCRIPT" "watchdog" "Restart Failed" "Failed to restart ${svc} - manual intervention required" "critical"
+            "$ALERT_SCRIPT" "watchdog" "Monitor Recovered" "✅ Service \`${svc}\` restarted successfully" "low"
         fi
     fi
 done
 
 #-------------------------------------------------------------------------------
-# Check critical security services
+# Check auto-detected important services
 #-------------------------------------------------------------------------------
-for svc in "${CRITICAL_SERVICES[@]}"; do
-    if ! systemctl is-active --quiet "$svc" 2>/dev/null; then
-        MSG="Critical security service stopped:\n"
-        MSG+="• **Service:** ${svc}\n"
+IMPORTANT_SERVICES=$(detect_important_services)
+
+for svc in $IMPORTANT_SERVICES; do
+    STATE_FILE="${STATE_DIR}/svc_${svc}"
+    WAS_RUNNING=1
+    [[ -f "$STATE_FILE" ]] && WAS_RUNNING=$(cat "$STATE_FILE")
+    
+    if systemctl is-active --quiet "$svc" 2>/dev/null; then
+        # Service is running
+        IS_RUNNING=1
+        
+        # If it was down before, alert that it's back
+        if [[ "$WAS_RUNNING" == "0" ]]; then
+            DESC=$(get_service_description "$svc")
+            MSG="${DESC} is back online!
+
+**Service:** \`${svc}\`
+**Status:** ✅ Running"
+            
+            "$ALERT_SCRIPT" "watchdog" "Service Recovered" "$MSG" "low"
+        fi
+    else
+        # Service is NOT running
+        IS_RUNNING=0
+        
+        # Only alert if it was running before (avoid spam on boot)
+        if [[ "$WAS_RUNNING" == "1" ]]; then
+            DESC=$(get_service_description "$svc")
+            SEVERITY=$(get_service_severity "$svc")
+            
+            MSG="${DESC} has stopped!
+
+**Service:** \`${svc}\`
+**Status:** ❌ Not running
+**Impact:** $(case "$SEVERITY" in
+    critical) echo "⚠️ IMMEDIATE ACTION REQUIRED" ;;
+    high) echo "Service functionality degraded" ;;
+    *) echo "May affect system operations" ;;
+esac)
+
+_Check with:_ \`sudo systemctl status ${svc}\`"
+            
+            "$ALERT_SCRIPT" "watchdog" "Service Down: ${svc}" "$MSG" "$SEVERITY"
+        fi
+    fi
+    
+    echo "$IS_RUNNING" > "$STATE_FILE"
+done
         MSG+="• **Impact:** Security monitoring degraded\n"
         MSG+="• **Action:** Attempting restart"
         

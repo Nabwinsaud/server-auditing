@@ -235,8 +235,26 @@ sudo systemctl restart auditd
 | Invalid Username | 🟡 MEDIUM | >3 invalid user attempts |
 | Sensitive Command | 🟠 HIGH | sudo passwd/shadow/etc |
 | Root Access | 🟠 HIGH | su to root |
-| Service Down | 🔴 CRITICAL | Monitor service stopped |
+| Service Down | 🔴 CRITICAL | nginx/mysql/docker/etc stopped |
+| Service Recovered | 🟢 LOW | Service came back online |
+| Monitor Down | 🔴 CRITICAL | Monitoring service stopped |
 | File Change | 🟠 HIGH | System file modified |
+| Disk Critical | 🟠 HIGH | Disk usage >90% |
+
+### 🤖 Auto-Detected Services
+
+The watchdog **automatically detects** and monitors these services if installed:
+
+| Category | Services |
+|----------|----------|
+| Web Servers | nginx, apache2, httpd, caddy |
+| Databases | mysql, mariadb, postgresql, mongod |
+| Cache | redis, redis-server |
+| Containers | docker |
+| Security | auditd, fail2ban |
+| SSH | sshd |
+
+**No configuration needed!** If nginx is installed and enabled, it will be monitored automatically.
 
 ---
 
@@ -246,9 +264,25 @@ Edit `/opt/server-monitor/etc/config.env`:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `RATE_LIMIT_SECONDS` | 300 | Min seconds between same alert type |
 | `DISCORD_WEBHOOK` | - | Your Discord webhook URL |
 | `HOSTNAME` | auto | Server name shown in alerts |
+| `TIMEZONE` | UTC | Your local timezone for timestamps |
+| `RATE_LIMIT_SECONDS` | 300 | Min seconds between same alert type |
+
+### Timezone Examples
+```bash
+TIMEZONE="Asia/Kathmandu"    # Nepal
+TIMEZONE="Asia/Kolkata"      # India
+TIMEZONE="America/New_York"  # US East
+TIMEZONE="Europe/London"     # UK
+TIMEZONE="Asia/Tokyo"        # Japan
+```
+
+### Set Timezone During Install
+```bash
+curl -sSL https://raw.githubusercontent.com/Nabwinsaud/server-auditing/main/setup.sh | \
+  sudo DISCORD_WEBHOOK="YOUR_WEBHOOK" TIMEZONE="Asia/Kathmandu" bash
+```
 
 ---
 
