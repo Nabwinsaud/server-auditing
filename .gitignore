@@ -1,0 +1,12 @@
+# Ignore all markdown except README
+*.md
+!README.md
+
+# Local testing files
+*.log
+*.tmp
+*.bak
+
+# State files
+var/
+logs/
