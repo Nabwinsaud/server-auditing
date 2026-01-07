@@ -133,3 +133,128 @@ curl -sSL https://raw.githubusercontent.com/Nabwinsaud/server-auditing/main/unin
 - `systemd/` - Service unit files
 - `audit/` - Audit rules
 - `verify.sh` - Verification commands
+
+---
+
+## 📖 How to Use
+
+### Check Service Status
+```bash
+# See all monitoring services
+sudo systemctl status server-*
+
+# Check specific service
+sudo systemctl status server-ssh-monitor
+sudo systemctl status server-process-monitor
+```
+
+### View Logs
+```bash
+# Real-time logs from SSH monitor
+sudo journalctl -u server-ssh-monitor -f
+
+# All monitor logs
+sudo journalctl -u server-process-monitor -u server-ssh-monitor -u server-network-monitor -f
+
+# Local log file
+sudo tail -f /opt/server-monitor/logs/monitor.log
+```
+
+### Send Test Alert
+```bash
+sudo /opt/server-monitor/bin/alert.sh test "🧪 Test Alert" "This is a test message" medium
+```
+
+### Manage Services
+```bash
+# Restart a service
+sudo systemctl restart server-ssh-monitor
+
+# Stop all monitoring temporarily
+sudo systemctl stop server-process-monitor server-ssh-monitor server-network-monitor
+
+# Start all monitoring
+sudo systemctl start server-process-monitor server-ssh-monitor server-network-monitor
+```
+
+### Update Configuration
+```bash
+# Edit config (need to remove immutable flag first)
+sudo chattr -i /opt/server-monitor/etc/config.env
+sudo nano /opt/server-monitor/etc/config.env
+sudo chattr +i /opt/server-monitor/etc/config.env
+
+# Restart services to apply
+sudo systemctl restart server-ssh-monitor server-process-monitor
+```
+
+---
+
+## 🗑️ How to Uninstall
+
+### Option 1: One-Line Uninstall
+```bash
+curl -sSL https://raw.githubusercontent.com/Nabwinsaud/server-auditing/main/uninstall.sh | sudo bash
+```
+
+### Option 2: Manual Uninstall
+```bash
+# Stop all services
+sudo systemctl stop server-process-monitor server-network-monitor server-ssh-monitor server-watchdog server-file-monitor.timer server-rootkit-scan.timer
+
+# Remove immutable flag from protected files
+sudo chattr -i /opt/server-monitor/bin/*.sh
+sudo chattr -i /opt/server-monitor/etc/config.env
+sudo chattr -i /etc/systemd/system/server-*.service
+sudo chattr -i /etc/systemd/system/server-*.timer
+
+# Disable services
+sudo systemctl disable server-process-monitor server-network-monitor server-ssh-monitor server-watchdog server-file-monitor.timer server-rootkit-scan.timer
+
+# Remove files
+sudo rm -rf /opt/server-monitor
+sudo rm -f /etc/systemd/system/server-*.service
+sudo rm -f /etc/systemd/system/server-*.timer
+sudo rm -f /etc/audit/rules.d/server-monitor.rules
+
+# Reload systemd
+sudo systemctl daemon-reload
+sudo systemctl restart auditd
+```
+
+---
+
+## 🔔 Alert Types
+
+| Alert | Severity | Trigger |
+|-------|----------|---------|
+| User Login | 🟢 LOW | Normal SSH login |
+| Root Login | 🟠 HIGH | Root SSH login |
+| Failed Login Attempts | 🟠 HIGH | >5 failed SSH attempts |
+| Brute Force Attack | 🔴 CRITICAL | >20 failed attempts |
+| Invalid Username | 🟡 MEDIUM | >3 invalid user attempts |
+| Sensitive Command | 🟠 HIGH | sudo passwd/shadow/etc |
+| Root Access | 🟠 HIGH | su to root |
+| Service Down | 🔴 CRITICAL | Monitor service stopped |
+| File Change | 🟠 HIGH | System file modified |
+
+---
+
+## ⚙️ Configuration Options
+
+Edit `/opt/server-monitor/etc/config.env`:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `RATE_LIMIT_SECONDS` | 300 | Min seconds between same alert type |
+| `DISCORD_WEBHOOK` | - | Your Discord webhook URL |
+| `HOSTNAME` | auto | Server name shown in alerts |
+
+---
+
+## 🔒 Security Notes
+
+- **Webhook URL**: Keep it secret! Anyone with it can send fake alerts
+- **Config file**: Protected with `chmod 600` - only root can read
+- **Scripts**: Protected with `chattr +i` - can't be modified without removing flag
+- **No incoming ports**: Only makes outbound HTTPS requests to Discord

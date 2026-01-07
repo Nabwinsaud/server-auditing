@@ -73,13 +73,17 @@ mkdir -p "${INSTALL_DIR}"/{bin,etc,var/state,var/cache,logs}
 log "Creating configuration..."
 cat > "${INSTALL_DIR}/etc/config.env" << EOF
 # Server Monitor Configuration
+# SECURITY: Keep this file protected (chmod 600)
 DISCORD_WEBHOOK="${DISCORD_WEBHOOK}"
 HOSTNAME="${HOSTNAME}"
 INSTALL_DIR="${INSTALL_DIR}"
-RATE_LIMIT_SECONDS=60
-MAX_ALERTS_PER_MINUTE=10
+RATE_LIMIT_SECONDS=300
 LOG_FILE="${INSTALL_DIR}/logs/monitor.log"
 EOF
+chmod 600 "${INSTALL_DIR}/etc/config.env"
+
+# Create dedup directory for duplicate prevention
+mkdir -p "${INSTALL_DIR}/var/dedup"
 
 #-------------------------------------------------------------------------------
 # Create whitelist (customize as needed)

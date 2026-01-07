@@ -19,6 +19,7 @@ INSTALL_DIR="/opt/server-monitor"
 
 log "Stopping services..."
 systemctl stop server-file-monitor.timer 2>/dev/null || true
+systemctl stop server-rootkit-scan.timer 2>/dev/null || true
 systemctl stop server-process-monitor 2>/dev/null || true
 systemctl stop server-network-monitor 2>/dev/null || true
 systemctl stop server-ssh-monitor 2>/dev/null || true
@@ -26,6 +27,7 @@ systemctl stop server-watchdog 2>/dev/null || true
 
 log "Disabling services..."
 systemctl disable server-file-monitor.timer 2>/dev/null || true
+systemctl disable server-rootkit-scan.timer 2>/dev/null || true
 systemctl disable server-process-monitor 2>/dev/null || true
 systemctl disable server-network-monitor 2>/dev/null || true
 systemctl disable server-ssh-monitor 2>/dev/null || true

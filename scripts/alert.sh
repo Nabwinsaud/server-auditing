@@ -2,6 +2,9 @@
 #===============================================================================
 # DISCORD ALERT SENDER
 # Rate-limited, formatted alerts to Discord webhook
+# 
+# SECURITY: This script only sends outbound HTTPS requests to Discord.
+# Webhook URL should be kept confidential in config.env (chmod 600)
 #===============================================================================
 
 set -euo pipefail
@@ -14,11 +17,12 @@ CONFIG_FILE="${CONFIG_FILE:-/opt/server-monitor/etc/config.env}"
 DISCORD_WEBHOOK="${DISCORD_WEBHOOK:-}"
 HOSTNAME="${HOSTNAME:-$(hostname)}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/server-monitor}"
-RATE_LIMIT_SECONDS="${RATE_LIMIT_SECONDS:-60}"
+RATE_LIMIT_SECONDS="${RATE_LIMIT_SECONDS:-300}"  # 5 minutes default to prevent spam
 LOG_FILE="${LOG_FILE:-/opt/server-monitor/logs/monitor.log}"
 
 CACHE_DIR="${INSTALL_DIR}/var/cache"
-mkdir -p "$CACHE_DIR"
+DEDUP_DIR="${INSTALL_DIR}/var/dedup"
+mkdir -p "$CACHE_DIR" "$DEDUP_DIR"
 
 # Arguments
 ALERT_TYPE="${1:-info}"
@@ -33,7 +37,21 @@ if [[ -z "$DISCORD_WEBHOOK" ]]; then
 fi
 
 #-------------------------------------------------------------------------------
-# Rate limiting
+# Deduplication - Don't send exact same alert content twice
+#-------------------------------------------------------------------------------
+CONTENT_HASH=$(echo "${ALERT_TITLE}|${ALERT_MESSAGE}" | md5sum | cut -d' ' -f1)
+DEDUP_FILE="${DEDUP_DIR}/${CONTENT_HASH}"
+
+if [[ -f "$DEDUP_FILE" ]]; then
+    # Already sent this exact alert, skip
+    exit 0
+fi
+# Mark as sent (cleanup old dedup files older than 1 hour)
+find "$DEDUP_DIR" -type f -mmin +60 -delete 2>/dev/null || true
+touch "$DEDUP_FILE"
+
+#-------------------------------------------------------------------------------
+# Rate limiting by alert type (prevents flood of similar alerts)
 #-------------------------------------------------------------------------------
 CACHE_KEY=$(echo "${ALERT_TITLE}${ALERT_TYPE}" | md5sum | cut -d' ' -f1)
 CACHE_FILE="${CACHE_DIR}/alert_${CACHE_KEY}"
@@ -42,74 +60,101 @@ NOW=$(date +%s)
 if [[ -f "$CACHE_FILE" ]]; then
     LAST_ALERT=$(cat "$CACHE_FILE" 2>/dev/null || echo "0")
     if (( NOW - LAST_ALERT < RATE_LIMIT_SECONDS )); then
-        # Rate limited - log locally but don't send
-        echo "[$(date)] [RATE_LIMITED] [$SEVERITY] $ALERT_TITLE: $ALERT_MESSAGE" >> "$LOG_FILE"
+        echo "[$(date)] [RATE_LIMITED] [$SEVERITY] $ALERT_TITLE" >> "$LOG_FILE"
         exit 0
     fi
 fi
 echo "$NOW" > "$CACHE_FILE"
 
 #-------------------------------------------------------------------------------
-# Color based on severity
+# Severity styling - User-friendly colors and labels
 #-------------------------------------------------------------------------------
 case "$SEVERITY" in
-    critical) COLOR=15158332 ;;  # Red
-    high)     COLOR=15105570 ;;  # Orange
-    medium)   COLOR=16776960 ;;  # Yellow
-    low)      COLOR=3066993 ;;   # Green
-    info)     COLOR=3447003 ;;   # Blue
-    *)        COLOR=9807270 ;;   # Gray
+    critical) 
+        COLOR=15158332   # Red
+        SEV_EMOJI="🔴"
+        SEV_LABEL="CRITICAL"
+        ;;
+    high)     
+        COLOR=15105570   # Orange
+        SEV_EMOJI="🟠"
+        SEV_LABEL="HIGH"
+        ;;
+    medium)   
+        COLOR=16776960   # Yellow
+        SEV_EMOJI="🟡"
+        SEV_LABEL="MEDIUM"
+        ;;
+    low)      
+        COLOR=3066993    # Green
+        SEV_EMOJI="🟢"
+        SEV_LABEL="LOW"
+        ;;
+    info)     
+        COLOR=3447003    # Blue
+        SEV_EMOJI="🔵"
+        SEV_LABEL="INFO"
+        ;;
+    *)        
+        COLOR=9807270    # Gray
+        SEV_EMOJI="⚪"
+        SEV_LABEL="UNKNOWN"
+        ;;
 esac
 
 #-------------------------------------------------------------------------------
-# Emoji based on type
+# Type emoji and friendly labels
 #-------------------------------------------------------------------------------
 case "$ALERT_TYPE" in
-    file)     EMOJI="📁" ;;
-    process)  EMOJI="⚙️" ;;
-    network)  EMOJI="🌐" ;;
-    ssh)      EMOJI="🔐" ;;
-    privesc)  EMOJI="⚠️" ;;
-    watchdog) EMOJI="🐕" ;;
-    rootkit)  EMOJI="☠️" ;;
-    test)     EMOJI="🧪" ;;
-    *)        EMOJI="🚨" ;;
+    file)     EMOJI="📁"; TYPE_LABEL="File Change" ;;
+    process)  EMOJI="⚙️"; TYPE_LABEL="Process Alert" ;;
+    network)  EMOJI="🌐"; TYPE_LABEL="Network Activity" ;;
+    ssh)      EMOJI="🔐"; TYPE_LABEL="SSH Activity" ;;
+    privesc)  EMOJI="⚠️"; TYPE_LABEL="Privilege Change" ;;
+    watchdog) EMOJI="🐕"; TYPE_LABEL="System Health" ;;
+    rootkit)  EMOJI="☠️"; TYPE_LABEL="Security Scan" ;;
+    test)     EMOJI="✅"; TYPE_LABEL="Test" ;;
+    *)        EMOJI="🚨"; TYPE_LABEL="Alert" ;;
 esac
 
 #-------------------------------------------------------------------------------
-# Build payload
+# Format message - Convert \n to actual newlines for Discord
 #-------------------------------------------------------------------------------
-# Escape special characters for JSON
-escape_json() {
-    local str="$1"
-    str="${str//\\/\\\\}"
-    str="${str//\"/\\\"}"
-    str="${str//$'\n'/\\n}"
-    str="${str//$'\r'/}"
-    str="${str//$'\t'/  }"
-    echo "$str"
+# Replace literal \n with actual newlines, then format for JSON
+format_message() {
+    local msg="$1"
+    # Replace literal \n with actual newline
+    msg="${msg//\\n/$'\n'}"
+    # Remove ** markdown for cleaner look (Discord handles it)
+    echo "$msg"
 }
 
-ESCAPED_MSG=$(escape_json "$ALERT_MESSAGE")
-ESCAPED_TITLE=$(escape_json "$ALERT_TITLE")
+FORMATTED_MSG=$(format_message "$ALERT_MESSAGE")
 
-PAYLOAD=$(cat << EOF
-{
-    "embeds": [{
-        "title": "${EMOJI} ${ESCAPED_TITLE}",
-        "description": "${ESCAPED_MSG}",
-        "color": ${COLOR},
-        "fields": [
-            {"name": "🖥️ Host", "value": "${HOSTNAME}", "inline": true},
-            {"name": "📊 Severity", "value": "${SEVERITY^^}", "inline": true},
-            {"name": "👤 User", "value": "${USER:-system}", "inline": true},
-            {"name": "🏷️ Type", "value": "${ALERT_TYPE}", "inline": true}
-        ],
-        "footer": {"text": "Server Monitor v1.0"},
-        "timestamp": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    }]
-}
-EOF
+#-------------------------------------------------------------------------------
+# Build payload with improved UI using jq for proper JSON escaping
+#-------------------------------------------------------------------------------
+PAYLOAD=$(jq -n \
+    --arg title "${EMOJI} ${ALERT_TITLE}" \
+    --arg desc "$FORMATTED_MSG" \
+    --arg host "$HOSTNAME" \
+    --arg sev "${SEV_EMOJI} ${SEV_LABEL}" \
+    --arg type "${TYPE_LABEL}" \
+    --arg time "$(date '+%b %d, %Y at %I:%M %p')" \
+    --argjson color "$COLOR" \
+    '{
+        embeds: [{
+            title: $title,
+            description: $desc,
+            color: $color,
+            fields: [
+                {name: "🖥️ Server", value: ("**" + $host + "**"), inline: true},
+                {name: "📊 Severity", value: $sev, inline: true},
+                {name: "🏷️ Category", value: $type, inline: true}
+            ],
+            footer: {text: ("🛡️ Server Monitor • " + $time)}
+        }]
+    }'
 )
 
 #-------------------------------------------------------------------------------
@@ -121,7 +166,9 @@ HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
     "$DISCORD_WEBHOOK" 2>/dev/null || echo "000")
 
 if [[ "$HTTP_CODE" == "204" ]] || [[ "$HTTP_CODE" == "200" ]]; then
-    echo "[$(date)] [SENT] [$SEVERITY] $ALERT_TITLE: $ALERT_MESSAGE" >> "$LOG_FILE"
+    echo "[$(date)] [SENT] [$SEVERITY] $ALERT_TITLE" >> "$LOG_FILE"
 else
-    echo "[$(date)] [FAILED:$HTTP_CODE] [$SEVERITY] $ALERT_TITLE: $ALERT_MESSAGE" >> "$LOG_FILE"
+    echo "[$(date)] [FAILED:$HTTP_CODE] [$SEVERITY] $ALERT_TITLE" >> "$LOG_FILE"
+    # Remove dedup file so it can retry
+    rm -f "$DEDUP_FILE" 2>/dev/null || true
 fi

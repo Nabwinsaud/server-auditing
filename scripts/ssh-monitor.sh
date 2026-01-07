@@ -46,22 +46,20 @@ NEW_ENTRIES=$(tail -n "$LINES_TO_PROCESS" "$AUTH_LOG")
 #-------------------------------------------------------------------------------
 echo "$NEW_ENTRIES" | grep "Accepted" | while read -r line; do
     # Parse: Jan  7 10:23:45 hostname sshd[1234]: Accepted publickey for user from 1.2.3.4
-    TIMESTAMP=$(echo "$line" | awk '{print $1" "$2" "$3}')
     USER=$(echo "$line" | grep -oP 'for \K\w+' || echo "unknown")
     IP=$(echo "$line" | grep -oP 'from \K[0-9.]+' || echo "unknown")
     METHOD=$(echo "$line" | grep -oP 'Accepted \K\w+' || echo "unknown")
     
-    MSG="SSH Login Detected:\n"
-    MSG+="• **User:** ${USER}\n"
-    MSG+="• **From:** ${IP}\n"
-    MSG+="• **Method:** ${METHOD}\n"
-    MSG+="• **Time:** ${TIMESTAMP}"
+    # User-friendly message with proper newlines
+    MSG="👤 **User:** \`${USER}\`
+🌍 **IP Address:** \`${IP}\`
+🔑 **Auth Method:** ${METHOD}"
     
     # Root login is higher severity
     if [[ "$USER" == "root" ]]; then
-        "$ALERT_SCRIPT" "ssh" "Root SSH Login" "$MSG" "high"
+        "$ALERT_SCRIPT" "ssh" "⚠️ Root Login Detected" "$MSG" "high"
     else
-        "$ALERT_SCRIPT" "ssh" "SSH Login" "$MSG" "medium"
+        "$ALERT_SCRIPT" "ssh" "User Login" "$MSG" "low"
     fi
 done
 
@@ -73,67 +71,78 @@ FAILED_COUNT=$(echo "$NEW_ENTRIES" | grep -c "Failed password" || echo "0")
 if [[ $FAILED_COUNT -gt 5 ]]; then
     # Get attacking IPs
     ATTACKERS=$(echo "$NEW_ENTRIES" | grep "Failed password" | \
-        grep -oP 'from \K[0-9.]+' | sort | uniq -c | sort -rn | head -5)
+        grep -oP 'from \K[0-9.]+' | sort | uniq -c | sort -rn | head -3 | \
+        awk '{print "• " $2 " (" $1 " attempts)"}')
     
-    MSG="SSH Brute Force Attack:\n"
-    MSG+="• **Failed attempts:** ${FAILED_COUNT}\n"
-    MSG+="• **Top attackers:**\n\`\`\`\n${ATTACKERS}\n\`\`\`"
+    MSG="🚫 **Failed Attempts:** ${FAILED_COUNT}
+
+**Top Attacking IPs:**
+${ATTACKERS}
+
+_Consider blocking these IPs if attacks continue_"
     
     if [[ $FAILED_COUNT -gt 20 ]]; then
-        "$ALERT_SCRIPT" "ssh" "Brute Force Attack" "$MSG" "critical"
+        "$ALERT_SCRIPT" "ssh" "🚨 Brute Force Attack!" "$MSG" "critical"
     else
-        "$ALERT_SCRIPT" "ssh" "Brute Force Attack" "$MSG" "high"
+        "$ALERT_SCRIPT" "ssh" "Failed Login Attempts" "$MSG" "high"
     fi
 fi
 
 #-------------------------------------------------------------------------------
-# Check for invalid users
+# Check for invalid users (only alert if significant number)
 #-------------------------------------------------------------------------------
-INVALID_USERS=$(echo "$NEW_ENTRIES" | grep "Invalid user" | head -5)
-if [[ -n "$INVALID_USERS" ]]; then
-    COUNT=$(echo "$NEW_ENTRIES" | grep -c "Invalid user" || echo "0")
+INVALID_COUNT=$(echo "$NEW_ENTRIES" | grep -c "Invalid user" || echo "0")
+
+if [[ $INVALID_COUNT -gt 3 ]]; then
+    # Get sample of invalid usernames being tried
+    INVALID_NAMES=$(echo "$NEW_ENTRIES" | grep "Invalid user" | \
+        grep -oP 'Invalid user \K\w+' | sort | uniq | head -5 | \
+        tr '\n' ', ' | sed 's/,$//')
     
-    MSG="SSH Invalid User Attempts:\n"
-    MSG+="• **Count:** ${COUNT}\n"
-    MSG+="• **Sample attempts:**\n\`\`\`\n${INVALID_USERS}\n\`\`\`"
+    MSG="🔍 **Attempts:** ${INVALID_COUNT}
+👤 **Usernames tried:** \`${INVALID_NAMES}\`
+
+_Attackers scanning for common usernames_"
     
-    "$ALERT_SCRIPT" "ssh" "Invalid User Attempts" "$MSG" "medium"
+    "$ALERT_SCRIPT" "ssh" "Invalid Username Attempts" "$MSG" "medium"
 fi
 
 #-------------------------------------------------------------------------------
-# Check for privilege escalation (sudo usage)
+# Check for privilege escalation (sudo usage) - Only alert on sensitive commands
 #-------------------------------------------------------------------------------
 echo "$NEW_ENTRIES" | grep -E "sudo:.*COMMAND=" | while read -r line; do
     USER=$(echo "$line" | grep -oP 'sudo:\s+\K\w+' || echo "unknown")
     COMMAND=$(echo "$line" | grep -oP 'COMMAND=\K.*' || echo "unknown")
     
-    # Truncate long commands
-    COMMAND_SHORT="${COMMAND:0:100}"
-    [[ ${#COMMAND} -gt 100 ]] && COMMAND_SHORT+="..."
-    
-    MSG="Sudo Command Executed:\n"
-    MSG+="• **User:** ${USER}\n"
-    MSG+="• **Command:** \`${COMMAND_SHORT}\`"
-    
-    # Critical if sensitive commands
-    if echo "$COMMAND" | grep -qE "passwd|shadow|sudoers|visudo|chmod.*777|chown.*root"; then
-        "$ALERT_SCRIPT" "privesc" "Sensitive Sudo Command" "$MSG" "high"
+    # Only alert on sensitive commands, not routine ones
+    if echo "$COMMAND" | grep -qE "passwd|shadow|sudoers|visudo|chmod.*777|chown.*root|rm -rf|useradd|userdel|groupadd"; then
+        COMMAND_SHORT="${COMMAND:0:80}"
+        [[ ${#COMMAND} -gt 80 ]] && COMMAND_SHORT+="..."
+        
+        MSG="👤 **User:** \`${USER}\`
+💻 **Command:** \`${COMMAND_SHORT}\`
+
+_Sensitive system command executed_"
+        
+        "$ALERT_SCRIPT" "privesc" "Sensitive Command" "$MSG" "high"
     fi
 done
 
 #-------------------------------------------------------------------------------
-# Check for su usage
+# Check for su usage (switching to root)
 #-------------------------------------------------------------------------------
 echo "$NEW_ENTRIES" | grep "su\[" | grep "session opened" | while read -r line; do
     FROM_USER=$(echo "$line" | grep -oP 'by \K\w+' || echo "unknown")
     TO_USER=$(echo "$line" | grep -oP 'for user \K\w+' || echo "unknown")
     
-    MSG="User Switch (su):\n"
-    MSG+="• **From:** ${FROM_USER}\n"
-    MSG+="• **To:** ${TO_USER}"
-    
+    # Only alert when switching to root
     if [[ "$TO_USER" == "root" ]]; then
-        "$ALERT_SCRIPT" "privesc" "Switch to Root" "$MSG" "high"
+        MSG="👤 **From:** \`${FROM_USER}\`
+👑 **To:** \`root\`
+
+_User elevated to root privileges_"
+        
+        "$ALERT_SCRIPT" "privesc" "Root Access" "$MSG" "high"
     fi
 done
 
