@@ -62,15 +62,33 @@ info "Webhook: ${DISCORD_WEBHOOK:0:50}..."
 echo ""
 
 #-------------------------------------------------------------------------------
-# Install dependencies
+# Install dependencies (non-interactive mode for curl | bash compatibility)
 #-------------------------------------------------------------------------------
 log "Installing required packages..."
+
+# Set non-interactive mode to prevent dialogs blocking when running via curl | bash
+export DEBIAN_FRONTEND=noninteractive
+
+# Pre-configure packages that normally require interactive input
+log "Pre-configuring packages..."
+
+# Pre-configure postfix (required by some packages as dependency)
+echo "postfix postfix/main_mailer_type select No configuration" | debconf-set-selections 2>/dev/null || true
+echo "postfix postfix/mailname string $(hostname -f 2>/dev/null || hostname)" | debconf-set-selections 2>/dev/null || true
+
+# Pre-configure aide
+echo "aide aide/initial_db boolean false" | debconf-set-selections 2>/dev/null || true
+
 apt-get update -qq
 
+# Install packages with options to avoid any interactive prompts
 PACKAGES="auditd audispd-plugins aide fail2ban rkhunter chkrootkit inotify-tools jq curl ufw"
 for pkg in $PACKAGES; do
     if ! dpkg -l "$pkg" &>/dev/null; then
-        apt-get install -y -qq "$pkg" || warn "Failed to install $pkg"
+        apt-get install -y -qq \
+            -o Dpkg::Options::="--force-confdef" \
+            -o Dpkg::Options::="--force-confold" \
+            "$pkg" 2>/dev/null || warn "Failed to install $pkg"
     fi
 done
 

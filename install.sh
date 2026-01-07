@@ -28,11 +28,27 @@ HOSTNAME=$(hostname)
 log "Starting installation on ${HOSTNAME}..."
 
 #-------------------------------------------------------------------------------
-# Install dependencies
+# Install dependencies (non-interactive mode for curl | bash compatibility)
 #-------------------------------------------------------------------------------
 log "Installing required packages..."
+
+# Set non-interactive mode to prevent dialogs blocking when running via curl | bash
+export DEBIAN_FRONTEND=noninteractive
+
+# Pre-configure packages that normally require interactive input
+log "Pre-configuring packages..."
+
+# Pre-configure postfix (required by some packages as dependency)
+echo "postfix postfix/main_mailer_type select No configuration" | debconf-set-selections 2>/dev/null || true
+echo "postfix postfix/mailname string $(hostname -f 2>/dev/null || hostname)" | debconf-set-selections 2>/dev/null || true
+
+# Pre-configure aide
+echo "aide aide/initial_db boolean false" | debconf-set-selections 2>/dev/null || true
+
 apt-get update -qq
 apt-get install -y -qq \
+    -o Dpkg::Options::="--force-confdef" \
+    -o Dpkg::Options::="--force-confold" \
     auditd \
     audispd-plugins \
     aide \
@@ -43,7 +59,7 @@ apt-get install -y -qq \
     jq \
     curl \
     ufw \
-    > /dev/null
+    > /dev/null 2>&1 || warn "Some packages may have failed to install"
 
 #-------------------------------------------------------------------------------
 # Create directory structure
